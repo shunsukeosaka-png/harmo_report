@@ -16,6 +16,9 @@ const LOGIN_ID = process.env.LOGIN_ID ?? "9999";
 const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD ?? "9999";
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sid";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? 12);
+const COOKIE_SAMESITE = (process.env.COOKIE_SAMESITE ?? "Lax").trim();
+const COOKIE_SECURE_RAW = (process.env.COOKIE_SECURE ?? "auto").trim().toLowerCase();
+const SESSION_COOKIE_DOMAIN = (process.env.SESSION_COOKIE_DOMAIN ?? "").trim();
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -23,6 +26,34 @@ if (!DATABASE_URL) {
 }
 if (ALLOWED_ORIGINS.length === 0) {
   console.error("APP_ORIGIN is required (comma-separated allowed)");
+  process.exit(1);
+}
+
+function parseBoolLike(value) {
+  if (value === "1" || value === "true" || value === "yes" || value === "on") return true;
+  if (value === "0" || value === "false" || value === "no" || value === "off") return false;
+  return null;
+}
+
+const cookieSameSiteNormalized =
+  COOKIE_SAMESITE.length > 0
+    ? COOKIE_SAMESITE[0].toUpperCase() + COOKIE_SAMESITE.slice(1).toLowerCase()
+    : "Lax";
+const validSameSiteValues = new Set(["Lax", "Strict", "None"]);
+if (!validSameSiteValues.has(cookieSameSiteNormalized)) {
+  console.error("COOKIE_SAMESITE must be one of: Lax, Strict, None");
+  process.exit(1);
+}
+
+const cookieSecureAuto = process.env.NODE_ENV === "production";
+const cookieSecureExplicit = parseBoolLike(COOKIE_SECURE_RAW);
+if (COOKIE_SECURE_RAW !== "auto" && cookieSecureExplicit === null) {
+  console.error("COOKIE_SECURE must be one of: auto, true, false");
+  process.exit(1);
+}
+const cookieSecure = COOKIE_SECURE_RAW === "auto" ? cookieSecureAuto : cookieSecureExplicit;
+if (cookieSameSiteNormalized === "None" && !cookieSecure) {
+  console.error("COOKIE_SAMESITE=None requires COOKIE_SECURE=true");
   process.exit(1);
 }
 
@@ -63,9 +94,12 @@ function parseCookies(cookieHeader) {
 }
 
 function cookieBaseAttrs() {
-  const attrs = ["Path=/", "HttpOnly", "SameSite=Lax"];
-  if (process.env.NODE_ENV === "production") {
+  const attrs = ["Path=/", "HttpOnly", `SameSite=${cookieSameSiteNormalized}`];
+  if (cookieSecure) {
     attrs.push("Secure");
+  }
+  if (SESSION_COOKIE_DOMAIN) {
+    attrs.push(`Domain=${SESSION_COOKIE_DOMAIN}`);
   }
   return attrs.join("; ");
 }
@@ -274,4 +308,7 @@ app.get("/v1/visits", requireAuth, async (req, res) => {
 app.listen(PORT, () => {
   console.log(`API listening on :${PORT}`);
   console.log(`CORS origins allowed: ${ALLOWED_ORIGINS.join(", ")}`);
+  console.log(
+    `Session cookie settings: SameSite=${cookieSameSiteNormalized}, Secure=${cookieSecure}, Domain=${SESSION_COOKIE_DOMAIN || "(none)"}`
+  );
 });
