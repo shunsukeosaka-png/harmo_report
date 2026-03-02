@@ -1,0 +1,81 @@
+﻿<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ログイン</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+      background: linear-gradient(135deg, #d7f3ff, #f4fbff);
+    }
+    .login-card {
+      width: min(360px, 92vw);
+      padding: 24px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0, 45, 80, 0.12);
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: 1.4rem;
+      color: #0c2f4a;
+    }
+    label {
+      display: block;
+      margin-top: 12px;
+      font-size: 0.9rem;
+      color: #1e3a4f;
+    }
+    input {
+      width: 100%;
+      margin-top: 6px;
+      padding: 10px;
+      border: 1px solid #bfd2df;
+      border-radius: 8px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      margin-top: 16px;
+      padding: 10px;
+      border: 0;
+      border-radius: 8px;
+      background: #0b74b6;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:hover { background: #095f95; }
+    .message {
+      min-height: 1.2em;
+      margin-top: 12px;
+      font-size: 0.9rem;
+      color: #b00020;
+    }
+  </style>
+</head>
+<body>
+  <main class="login-card">
+    <h1>ログイン</h1>
+    <form id="loginForm" novalidate>
+      <label for="userId">ID</label>
+      <input id="userId" name="userId" type="text" autocomplete="username" required>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+      <button type="submit">ログイン</button>
+      <p id="message" class="message" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <script src="./login.js" defer></script>
+</body>
+</html>
