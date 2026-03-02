@@ -1,4 +1,5 @@
-﻿import cors from "cors";
+import crypto from "crypto";
+import cors from "cors";
 import express from "express";
 import pg from "pg";
 
@@ -13,6 +14,8 @@ const ALLOWED_ORIGINS = (APP_ORIGIN ?? "")
   .filter(Boolean);
 const LOGIN_ID = process.env.LOGIN_ID ?? "9999";
 const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD ?? "9999";
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sid";
+const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? 12);
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -44,6 +47,93 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 
+function parseCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  return Object.fromEntries(
+    cookieHeader
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const idx = part.indexOf("=");
+        if (idx < 0) return [part, ""];
+        return [part.slice(0, idx), decodeURIComponent(part.slice(idx + 1))];
+      })
+  );
+}
+
+function cookieBaseAttrs() {
+  const attrs = ["Path=/", "HttpOnly", "SameSite=Lax"];
+  if (process.env.NODE_ENV === "production") {
+    attrs.push("Secure");
+  }
+  return attrs.join("; ");
+}
+
+function setSessionCookie(res, token, expiresAt) {
+  const maxAgeSeconds = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+  res.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; ${cookieBaseAttrs()}; Max-Age=${maxAgeSeconds}`
+  );
+}
+
+function clearSessionCookie(res) {
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=; ${cookieBaseAttrs()}; Max-Age=0`);
+}
+
+async function createSession(userId) {
+  const sessionId = crypto.randomBytes(32).toString("hex");
+  const ttlMs = Math.max(1, SESSION_TTL_HOURS) * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + ttlMs);
+  await pool.query("INSERT INTO auth_sessions(id, user_id, expires_at) VALUES($1, $2, $3)", [
+    sessionId,
+    userId,
+    expiresAt.toISOString(),
+  ]);
+  return { sessionId, expiresAt };
+}
+
+async function findActiveSession(sessionId) {
+  const r = await pool.query(
+    `
+    SELECT id, user_id, expires_at
+    FROM auth_sessions
+    WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()
+    LIMIT 1
+    `,
+    [sessionId]
+  );
+  return r.rows[0] ?? null;
+}
+
+async function revokeSession(sessionId) {
+  await pool.query("UPDATE auth_sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [
+    sessionId,
+  ]);
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies[SESSION_COOKIE_NAME];
+    if (!sessionId) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    const session = await findActiveSession(sessionId);
+    if (!session) {
+      clearSessionCookie(res);
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    req.auth = { userId: session.user_id, sessionId: session.id };
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT 1 AS ok");
@@ -53,38 +143,56 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.post("/v1/auth/login", (req, res) => {
+app.post("/v1/auth/login", async (req, res) => {
   const { id, password } = req.body ?? {};
 
   if (typeof id !== "string" || typeof password !== "string") {
     return res.status(400).json({ ok: false, error: "id and password are required" });
   }
 
-  if (id === LOGIN_ID && password === LOGIN_PASSWORD) {
-    return res.json({ ok: true });
+  if (id !== LOGIN_ID || password !== LOGIN_PASSWORD) {
+    return res.status(401).json({ ok: false, error: "invalid credentials" });
   }
 
-  return res.status(401).json({ ok: false, error: "invalid credentials" });
+  try {
+    const { sessionId, expiresAt } = await createSession(id);
+    setSessionCookie(res, sessionId, expiresAt);
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error("Failed to create session", e);
+    return res.status(500).json({ ok: false, error: "session create failed" });
+  }
 });
 
-app.post("/v1/customers", async (req, res) => {
+app.get("/v1/auth/me", requireAuth, async (req, res) => {
+  res.json({ ok: true, user_id: req.auth.userId });
+});
+
+app.post("/v1/auth/logout", async (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (sessionId) {
+    await revokeSession(sessionId);
+  }
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.post("/v1/customers", requireAuth, async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {
     return res.status(400).json({ error: "name is required (<=200 chars)" });
   }
-  const r = await pool.query(
-    "INSERT INTO customers(name) VALUES($1) RETURNING id, name, created_at",
-    [name.trim()]
-  );
+  const r = await pool.query("INSERT INTO customers(name) VALUES($1) RETURNING id, name, created_at", [
+    name.trim(),
+  ]);
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/customers", async (req, res) => {
+app.get("/v1/customers", requireAuth, async (req, res) => {
   const q = (req.query.query ?? "").toString().trim();
   if (!q) {
-    const r = await pool.query(
-      "SELECT id, name, created_at FROM customers ORDER BY id DESC LIMIT 50"
-    );
+    const r = await pool.query("SELECT id, name, created_at FROM customers ORDER BY id DESC LIMIT 50");
     return res.json({ items: r.rows });
   }
   const r = await pool.query(
@@ -94,7 +202,7 @@ app.get("/v1/customers", async (req, res) => {
   res.json({ items: r.rows });
 });
 
-app.post("/v1/visits", async (req, res) => {
+app.post("/v1/visits", requireAuth, async (req, res) => {
   const { customer_id, visited_at, summary, body } = req.body ?? {};
 
   if (!Number.isInteger(customer_id)) {
@@ -122,7 +230,7 @@ app.post("/v1/visits", async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/visits", async (req, res) => {
+app.get("/v1/visits", requireAuth, async (req, res) => {
   const customerId = req.query.customer_id ? Number(req.query.customer_id) : null;
   const from = req.query.from ? new Date(req.query.from.toString()) : null;
   const to = req.query.to ? new Date(req.query.to.toString()) : null;
