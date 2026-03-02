@@ -1,4 +1,4 @@
-FROM node:20-alpine
+﻿FROM node:20-alpine
 
 WORKDIR /app
 
@@ -9,4 +9,4 @@ COPY src ./src
 COPY migrations ./migrations
 
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["sh", "-c", "npm run migrate && npm start"]

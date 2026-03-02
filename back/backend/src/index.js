@@ -44,27 +44,6 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 
-async function ensureSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS customers (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS visits (
-      id SERIAL PRIMARY KEY,
-      customer_id INTEGER NOT NULL REFERENCES customers(id),
-      visited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      summary TEXT NOT NULL,
-      body TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
-}
-
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT 1 AS ok");
@@ -184,14 +163,7 @@ app.get("/v1/visits", async (req, res) => {
   res.json({ items: r.rows });
 });
 
-ensureSchema()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`API listening on :${PORT}`);
-      console.log(`CORS origins allowed: ${ALLOWED_ORIGINS.join(", ")}`);
-    });
-  })
-  .catch((e) => {
-    console.error("Failed to start:", e);
-    process.exit(1);
-  });
+app.listen(PORT, () => {
+  console.log(`API listening on :${PORT}`);
+  console.log(`CORS origins allowed: ${ALLOWED_ORIGINS.join(", ")}`);
+});
