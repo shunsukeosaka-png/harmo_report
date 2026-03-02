@@ -1,0 +1,60 @@
+﻿services:
+  db:
+    image: postgres:16
+    container_name: customerapp-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    container_name: customerapp-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL}
+      APP_ORIGIN: ${APP_ORIGIN}
+      LOGIN_ID: ${LOGIN_ID:-9999}
+      LOGIN_PASSWORD: ${LOGIN_PASSWORD:-9999}
+      PORT: "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - appnet
+
+  caddy:
+    image: caddy:2
+    container_name: customerapp-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    networks:
+      - appnet
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+
+networks:
+  appnet:
