@@ -1,0 +1,6 @@
+{$API_DOMAIN} {
+  encode gzip zstd
+
+  # APIへ転送
+  reverse_proxy api:3000
+}
