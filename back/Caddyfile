@@ -1,6 +1,5 @@
-{$API_DOMAIN} {
+﻿harmo-training-api.lily-tech.net {
   encode gzip zstd
 
-  # APIへ転送
   reverse_proxy api:3000
 }

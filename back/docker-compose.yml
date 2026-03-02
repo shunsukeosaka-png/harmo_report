@@ -1,4 +1,4 @@
-services:
+﻿services:
   db:
     image: postgres:16
     container_name: customerapp-db
@@ -26,6 +26,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL}
       APP_ORIGIN: ${APP_ORIGIN}
+      LOGIN_ID: ${LOGIN_ID:-9999}
+      LOGIN_PASSWORD: ${LOGIN_PASSWORD:-9999}
       PORT: "3000"
     depends_on:
       db:
@@ -44,8 +46,6 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    environment:
-      API_DOMAIN: ${API_DOMAIN}
     depends_on:
       - api
     networks:

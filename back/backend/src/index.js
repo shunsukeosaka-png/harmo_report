@@ -1,4 +1,5 @@
-import cors from "cors";
+﻿import cors from "cors";
+import express from "express";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -6,33 +7,43 @@ const { Pool } = pg;
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 const DATABASE_URL = process.env.DATABASE_URL;
 const APP_ORIGIN = process.env.APP_ORIGIN;
+const ALLOWED_ORIGINS = (APP_ORIGIN ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const LOGIN_ID = process.env.LOGIN_ID ?? "9999";
+const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD ?? "9999";
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is required");
   process.exit(1);
 }
-if (!APP_ORIGIN) {
-  console.error("APP_ORIGIN is required (e.g. https://app.example.com)");
+if (ALLOWED_ORIGINS.length === 0) {
+  console.error("APP_ORIGIN is required (comma-separated allowed)");
   process.exit(1);
 }
 
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-});
-
+const pool = new Pool({ connectionString: DATABASE_URL });
 const app = express();
 
-// Pages(フロント)からのアクセスだけ許可するCORS
 app.use(
   cors({
-    origin: APP_ORIGIN,
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
-
 app.use(express.json({ limit: "1mb" }));
 
-// --- 起動時にテーブルがなければ作る（最小のための簡易） ---
 async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS customers (
@@ -54,7 +65,6 @@ async function ensureSchema() {
   `);
 }
 
-// --- ヘルスチェック ---
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT 1 AS ok");
@@ -64,7 +74,20 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-// --- 顧客作成 ---
+app.post("/v1/auth/login", (req, res) => {
+  const { id, password } = req.body ?? {};
+
+  if (typeof id !== "string" || typeof password !== "string") {
+    return res.status(400).json({ ok: false, error: "id and password are required" });
+  }
+
+  if (id === LOGIN_ID && password === LOGIN_PASSWORD) {
+    return res.json({ ok: true });
+  }
+
+  return res.status(401).json({ ok: false, error: "invalid credentials" });
+});
+
 app.post("/v1/customers", async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {
@@ -77,7 +100,6 @@ app.post("/v1/customers", async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-// --- 顧客検索（部分一致） ---
 app.get("/v1/customers", async (req, res) => {
   const q = (req.query.query ?? "").toString().trim();
   if (!q) {
@@ -93,7 +115,6 @@ app.get("/v1/customers", async (req, res) => {
   res.json({ items: r.rows });
 });
 
-// --- 訪問記録作成 ---
 app.post("/v1/visits", async (req, res) => {
   const { customer_id, visited_at, summary, body } = req.body ?? {};
 
@@ -107,7 +128,6 @@ app.post("/v1/visits", async (req, res) => {
     return res.status(400).json({ error: "body is required (<=10000 chars)" });
   }
 
-  // visited_at は任意（なければnow）
   const visitedAtValue = visited_at ? new Date(visited_at) : new Date();
   if (Number.isNaN(visitedAtValue.getTime())) {
     return res.status(400).json({ error: "visited_at is invalid date" });
@@ -123,7 +143,6 @@ app.post("/v1/visits", async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-// --- 訪問記録一覧（期間・顧客で絞り込み） ---
 app.get("/v1/visits", async (req, res) => {
   const customerId = req.query.customer_id ? Number(req.query.customer_id) : null;
   const from = req.query.from ? new Date(req.query.from.toString()) : null;
@@ -151,7 +170,7 @@ app.get("/v1/visits", async (req, res) => {
   const r = await pool.query(
     `
     SELECT
-      v.id, v.customer_id, c.name as customer_name,
+      v.id, v.customer_id, c.name AS customer_name,
       v.visited_at, v.summary, v.body, v.created_at
     FROM visits v
     JOIN customers c ON c.id = v.customer_id
@@ -165,12 +184,11 @@ app.get("/v1/visits", async (req, res) => {
   res.json({ items: r.rows });
 });
 
-// --- 起動 ---
 ensureSchema()
   .then(() => {
     app.listen(PORT, () => {
       console.log(`API listening on :${PORT}`);
-      console.log(`CORS origin allowed: ${APP_ORIGIN}`);
+      console.log(`CORS origins allowed: ${ALLOWED_ORIGINS.join(", ")}`);
     });
   })
   .catch((e) => {
