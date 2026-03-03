@@ -1,4 +1,5 @@
 const logoutBtn = document.getElementById("logoutBtn");
+const exportCsvBtn = document.getElementById("exportCsvBtn");
 const filterForm = document.getElementById("filterForm");
 const clearBtn = document.getElementById("clearBtn");
 const serialFilter = document.getElementById("serialFilter");
@@ -16,6 +17,8 @@ const PAGE_SIZE = 50;
 const state = {
   page: 1,
   totalPages: 0,
+  totalItems: 0,
+  currentItems: [],
 };
 
 function setMessage(text, color = "#b00020") {
@@ -165,6 +168,89 @@ function buildSearchParams(page) {
   return params;
 }
 
+function escapeCsvValue(value) {
+  if (value == null) return "";
+  const text = String(value);
+  if (text.includes('"') || text.includes(",") || text.includes("\n") || text.includes("\r")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function createCsvContent(items) {
+  const headers = [
+    "顧客名",
+    "住所",
+    "シリアル",
+    "作業内容",
+    "交換部品",
+    "フォルト有無",
+    "フォルト情報",
+    "作業時間",
+    "作成者",
+    "作成日時",
+  ];
+
+  const lines = [headers.map(escapeCsvValue).join(",")];
+  for (const item of items) {
+    const baseColumns = [
+      item.customer_name,
+      item.address,
+      item.serial_number,
+      item.work_type,
+      null, // 交換部品は下で設定
+      item.has_fault_info ? "あり" : "なし",
+      item.fault_info ?? "",
+      item.work_hours,
+      item.created_by,
+      item.created_at,
+    ];
+
+    if (!Array.isArray(item.parts) || item.parts.length === 0) {
+      const row = [...baseColumns];
+      row[4] = "";
+      lines.push(row.map(escapeCsvValue).join(","));
+      continue;
+    }
+
+    for (const part of item.parts) {
+      const row = [...baseColumns];
+      row[4] = `${part.part_number} x ${part.quantity}`;
+      lines.push(row.map(escapeCsvValue).join(","));
+    }
+  }
+  return lines.join("\r\n");
+}
+
+function downloadCurrentPageCsv() {
+  if (!Array.isArray(state.currentItems) || state.currentItems.length === 0) {
+    setMessage("CSV出力対象のデータがありません。");
+    return;
+  }
+
+  const csv = createCsvContent(state.currentItems);
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  const filename = `reports_page${state.page}_${y}${m}${d}_${hh}${mm}${ss}.csv`;
+
+  const blob = new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  setMessage(`CSVを出力しました（${state.currentItems.length}件）`, "#355268");
+}
+
 async function ensureLoggedIn() {
   try {
     const response = await fetch(`${API_BASE_URL}/v1/auth/me`, {
@@ -216,6 +302,8 @@ async function loadReports(page = 1) {
     const pageInfo = data.pagination ?? {};
     state.page = pageInfo.page ?? page;
     state.totalPages = pageInfo.total_pages ?? 0;
+    state.totalItems = pageInfo.total ?? items.length;
+    state.currentItems = items;
 
     renderRows(items);
     renderPagination();
@@ -223,7 +311,7 @@ async function loadReports(page = 1) {
     if (items.length === 0) {
       setMessage("データがありません。", "#355268");
     } else {
-      setMessage(`${pageInfo.total ?? items.length}件中 ${items.length}件を表示`, "#355268");
+      setMessage(`${state.totalItems}件中 ${items.length}件を表示`, "#355268");
     }
   } catch (_error) {
     setMessage("一覧APIに接続できません。");
@@ -252,6 +340,10 @@ clearBtn.addEventListener("click", async () => {
   hasFaultFilter.value = "";
   createdByFilter.value = "";
   await loadReports(1);
+});
+
+exportCsvBtn.addEventListener("click", () => {
+  downloadCurrentPageCsv();
 });
 
 logoutBtn.addEventListener("click", async () => {
