@@ -250,6 +250,121 @@ app.post("/v1/auth/logout", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/v1/reports", requireAuth, async (req, res) => {
+  const {
+    customer_name,
+    address,
+    serial_number,
+    work_type,
+    has_fault_info,
+    fault_info,
+    work_hours,
+    parts,
+  } = req.body ?? {};
+
+  if (!customer_name || typeof customer_name !== "string" || customer_name.trim().length > 200) {
+    return res.status(400).json({ error: "customer_name is required (<=200 chars)" });
+  }
+  if (!address || typeof address !== "string" || address.trim().length > 1000) {
+    return res.status(400).json({ error: "address is required (<=1000 chars)" });
+  }
+  if (!serial_number || typeof serial_number !== "string" || serial_number.trim().length > 200) {
+    return res.status(400).json({ error: "serial_number is required (<=200 chars)" });
+  }
+  if (!work_type || typeof work_type !== "string" || work_type.trim().length > 100) {
+    return res.status(400).json({ error: "work_type is required (<=100 chars)" });
+  }
+  if (typeof has_fault_info !== "boolean") {
+    return res.status(400).json({ error: "has_fault_info must be boolean" });
+  }
+
+  const faultInfoValue = has_fault_info ? (typeof fault_info === "string" ? fault_info.trim() : "") : null;
+  if (has_fault_info && (!faultInfoValue || faultInfoValue.length > 1000)) {
+    return res.status(400).json({ error: "fault_info is required when has_fault_info=true (<=1000 chars)" });
+  }
+  if (!has_fault_info && fault_info != null && String(fault_info).trim() !== "") {
+    return res.status(400).json({ error: "fault_info must be null/empty when has_fault_info=false" });
+  }
+
+  const workHoursNumber = Number(work_hours);
+  if (!Number.isFinite(workHoursNumber) || workHoursNumber < 0) {
+    return res.status(400).json({ error: "work_hours must be a number >= 0" });
+  }
+
+  if (!Array.isArray(parts)) {
+    return res.status(400).json({ error: "parts must be an array" });
+  }
+
+  const normalizedParts = [];
+  for (const part of parts) {
+    const partNumberRaw = part?.part_number;
+    const quantityRaw = part?.quantity;
+
+    if (typeof partNumberRaw !== "string" || !partNumberRaw.trim() || partNumberRaw.trim().length > 200) {
+      return res.status(400).json({ error: "part_number is required for each part (<=200 chars)" });
+    }
+
+    const quantityNumber = Number(quantityRaw);
+    if (!Number.isInteger(quantityNumber) || quantityNumber <= 0) {
+      return res.status(400).json({ error: "quantity must be a positive integer for each part" });
+    }
+
+    normalizedParts.push({
+      part_number: partNumberRaw.trim(),
+      quantity: quantityNumber,
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const reportResult = await client.query(
+      `
+      INSERT INTO reports(
+        customer_name, address, serial_number, work_type,
+        has_fault_info, fault_info, work_hours, created_by
+      )
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING
+        id, customer_name, address, serial_number, work_type,
+        has_fault_info, fault_info, work_hours, created_by, created_at
+      `,
+      [
+        customer_name.trim(),
+        address.trim(),
+        serial_number.trim(),
+        work_type.trim(),
+        has_fault_info,
+        faultInfoValue,
+        workHoursNumber,
+        req.auth.userId,
+      ]
+    );
+
+    const report = reportResult.rows[0];
+
+    for (const part of normalizedParts) {
+      await client.query("INSERT INTO report_parts(report_id, part_number, quantity) VALUES($1, $2, $3)", [
+        report.id,
+        part.part_number,
+        part.quantity,
+      ]);
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json({
+      ...report,
+      parts: normalizedParts,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("Failed to create report", e);
+    res.status(500).json({ error: "failed to create report" });
+  } finally {
+    client.release();
+  }
+});
+
 app.post("/v1/customers", requireAuth, async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {

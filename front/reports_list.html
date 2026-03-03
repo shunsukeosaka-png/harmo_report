@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="api-base-url" content="https://harmo-training-api.lily-tech.net">
+  <title>レポート一覧</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+      background: #f2f8fc;
+      color: #143046;
+    }
+    main {
+      width: min(960px, 92vw);
+      margin: 24px auto;
+      padding: 24px;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 10px 24px rgba(13, 47, 74, 0.1);
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+    .placeholder {
+      margin-top: 20px;
+      padding: 20px;
+      border: 1px dashed #b7cedc;
+      border-radius: 8px;
+      background: #f8fcff;
+      color: #355268;
+    }
+    button, .menu-link {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.95rem;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+      background: #e4edf3;
+      color: #123349;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="header">
+      <h1>レポート一覧</h1>
+      <div class="header-actions">
+        <a class="menu-link" href="./home.html">メニューへ</a>
+        <button id="logoutBtn" type="button">ログアウト</button>
+      </div>
+    </div>
+
+    <div class="placeholder">
+      一覧画面はこれから実装します。
+    </div>
+  </main>
+
+  <script src="./reports_list.js" defer></script>
+</body>
+</html>

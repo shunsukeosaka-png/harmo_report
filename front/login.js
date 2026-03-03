@@ -11,7 +11,7 @@ async function checkAlreadyLoggedIn() {
       credentials: "include",
     });
     if (response.ok) {
-      window.location.href = "./report.html";
+      window.location.href = "./home.html";
     }
   } catch (_error) {
     // Ignore and keep login form.
@@ -49,7 +49,7 @@ form.addEventListener("submit", async (event) => {
       return;
     }
 
-    window.location.href = "./report.html";
+    window.location.href = "./home.html";
   } catch (_error) {
     message.style.color = "#b00020";
     message.textContent = "ログインAPIに接続できません。";
