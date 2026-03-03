@@ -15,6 +15,7 @@ const ALLOWED_ORIGINS = (APP_ORIGIN ?? "")
 const LOGIN_ID = process.env.LOGIN_ID ?? "9999";
 const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD ?? "9999";
 const LOGIN_ROLE = Number(process.env.LOGIN_ROLE ?? 9);
+const SLACK_WEBHOOK_URL = (process.env.SLACK_WEBHOOK_URL ?? "").trim();
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sid";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? 12);
 const COOKIE_SAMESITE = (process.env.COOKIE_SAMESITE ?? "Lax").trim();
@@ -44,6 +45,64 @@ const REPORT_WRITE_ROLES = new Set([0, 1, 9]);
 
 function isReportWriteAllowed(role) {
   return REPORT_WRITE_ROLES.has(Number(role));
+}
+
+function formatPartsText(parts) {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return "なし";
+  }
+  return parts.map((part, index) => `${index + 1}. ${part.part_number} x${part.quantity}`).join("\n");
+}
+
+function buildSlackFaultReportMessage(report) {
+  return [
+    ":rotating_light: フォルトコード有りのレポートが登録されました",
+    `レポートID: ${report.id}`,
+    `作成日時: ${report.created_at}`,
+    `作成者: ${report.created_by}`,
+    `顧客名: ${report.customer_name}`,
+    `住所: ${report.address}`,
+    `シリアル番号: ${report.serial_number}`,
+    `作業内容: ${report.work_type}`,
+    `作業時間: ${report.work_hours}`,
+    `フォルト情報有無: ${report.has_fault_info ? "あり" : "なし"}`,
+    `フォルト詳細: ${report.fault_info ?? ""}`,
+    "部品交換:",
+    formatPartsText(report.parts),
+  ].join("\n");
+}
+
+async function notifySlackFaultReport(report) {
+  if (!SLACK_WEBHOOK_URL || !report?.has_fault_info) {
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 5000);
+
+  try {
+    const response = await fetch(SLACK_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        text: buildSlackFaultReportMessage(report),
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      console.error("Slack notification failed", response.status, responseText);
+    }
+  } catch (e) {
+    console.error("Slack notification error", e);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 const cookieSameSiteNormalized =
@@ -365,10 +424,13 @@ app.post("/v1/reports", requireAuth, requireReportWriteRole, async (req, res) =>
     }
 
     await client.query("COMMIT");
-    res.status(201).json({
+    const responseBody = {
       ...report,
       parts: normalizedParts,
-    });
+    };
+
+    await notifySlackFaultReport(responseBody);
+    res.status(201).json(responseBody);
   } catch (e) {
     await client.query("ROLLBACK");
     console.error("Failed to create report", e);
