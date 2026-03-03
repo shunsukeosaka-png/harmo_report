@@ -1,4 +1,5 @@
-﻿import cors from "cors";
+import crypto from "crypto";
+import cors from "cors";
 import express from "express";
 import pg from "pg";
 
@@ -13,6 +14,12 @@ const ALLOWED_ORIGINS = (APP_ORIGIN ?? "")
   .filter(Boolean);
 const LOGIN_ID = process.env.LOGIN_ID ?? "9999";
 const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD ?? "9999";
+const LOGIN_ROLE = Number(process.env.LOGIN_ROLE ?? 9);
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sid";
+const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? 12);
+const COOKIE_SAMESITE = (process.env.COOKIE_SAMESITE ?? "Lax").trim();
+const COOKIE_SECURE_RAW = (process.env.COOKIE_SECURE ?? "auto").trim().toLowerCase();
+const SESSION_COOKIE_DOMAIN = (process.env.SESSION_COOKIE_DOMAIN ?? "").trim();
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is required");
@@ -20,6 +27,38 @@ if (!DATABASE_URL) {
 }
 if (ALLOWED_ORIGINS.length === 0) {
   console.error("APP_ORIGIN is required (comma-separated allowed)");
+  process.exit(1);
+}
+if (!Number.isInteger(LOGIN_ROLE)) {
+  console.error("LOGIN_ROLE must be integer");
+  process.exit(1);
+}
+
+function parseBoolLike(value) {
+  if (value === "1" || value === "true" || value === "yes" || value === "on") return true;
+  if (value === "0" || value === "false" || value === "no" || value === "off") return false;
+  return null;
+}
+
+const cookieSameSiteNormalized =
+  COOKIE_SAMESITE.length > 0
+    ? COOKIE_SAMESITE[0].toUpperCase() + COOKIE_SAMESITE.slice(1).toLowerCase()
+    : "Lax";
+const validSameSiteValues = new Set(["Lax", "Strict", "None"]);
+if (!validSameSiteValues.has(cookieSameSiteNormalized)) {
+  console.error("COOKIE_SAMESITE must be one of: Lax, Strict, None");
+  process.exit(1);
+}
+
+const cookieSecureAuto = process.env.NODE_ENV === "production";
+const cookieSecureExplicit = parseBoolLike(COOKIE_SECURE_RAW);
+if (COOKIE_SECURE_RAW !== "auto" && cookieSecureExplicit === null) {
+  console.error("COOKIE_SECURE must be one of: auto, true, false");
+  process.exit(1);
+}
+const cookieSecure = COOKIE_SECURE_RAW === "auto" ? cookieSecureAuto : cookieSecureExplicit;
+if (cookieSameSiteNormalized === "None" && !cookieSecure) {
+  console.error("COOKIE_SAMESITE=None requires COOKIE_SECURE=true");
   process.exit(1);
 }
 
@@ -44,25 +83,113 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 
-async function ensureSchema() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS customers (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
+function parseCookies(cookieHeader) {
+  if (!cookieHeader) return {};
+  return Object.fromEntries(
+    cookieHeader
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const idx = part.indexOf("=");
+        if (idx < 0) return [part, ""];
+        return [part.slice(0, idx), decodeURIComponent(part.slice(idx + 1))];
+      })
+  );
+}
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS visits (
-      id SERIAL PRIMARY KEY,
-      customer_id INTEGER NOT NULL REFERENCES customers(id),
-      visited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      summary TEXT NOT NULL,
-      body TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
+function cookieBaseAttrs() {
+  const attrs = ["Path=/", "HttpOnly", `SameSite=${cookieSameSiteNormalized}`];
+  if (cookieSecure) {
+    attrs.push("Secure");
+  }
+  if (SESSION_COOKIE_DOMAIN) {
+    attrs.push(`Domain=${SESSION_COOKIE_DOMAIN}`);
+  }
+  return attrs.join("; ");
+}
+
+function setSessionCookie(res, token, expiresAt) {
+  const maxAgeSeconds = Math.max(0, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+  res.setHeader(
+    "Set-Cookie",
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}; ${cookieBaseAttrs()}; Max-Age=${maxAgeSeconds}`
+  );
+}
+
+function clearSessionCookie(res) {
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE_NAME}=; ${cookieBaseAttrs()}; Max-Age=0`);
+}
+
+async function createSession(userId) {
+  const sessionId = crypto.randomBytes(32).toString("hex");
+  const ttlMs = Math.max(1, SESSION_TTL_HOURS) * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + ttlMs);
+  await pool.query("INSERT INTO auth_sessions(id, user_id, expires_at) VALUES($1, $2, $3)", [
+    sessionId,
+    userId,
+    expiresAt.toISOString(),
+  ]);
+  return { sessionId, expiresAt };
+}
+
+async function findActiveSession(sessionId) {
+  const r = await pool.query(
+    `
+    SELECT id, user_id, expires_at
+    FROM auth_sessions
+    WHERE id = $1 AND revoked_at IS NULL AND expires_at > now()
+    LIMIT 1
+    `,
+    [sessionId]
+  );
+  return r.rows[0] ?? null;
+}
+
+async function revokeSession(sessionId) {
+  await pool.query("UPDATE auth_sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", [
+    sessionId,
+  ]);
+}
+
+async function findUserById(userId) {
+  const r = await pool.query("SELECT id, password, role FROM users WHERE id = $1 LIMIT 1", [userId]);
+  return r.rows[0] ?? null;
+}
+
+async function resolveRoleByUserId(userId) {
+  if (userId === LOGIN_ID) return LOGIN_ROLE;
+  const user = await findUserById(userId);
+  if (!user) return null;
+  return user.role;
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionId = cookies[SESSION_COOKIE_NAME];
+    if (!sessionId) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    const session = await findActiveSession(sessionId);
+    if (!session) {
+      clearSessionCookie(res);
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    const role = await resolveRoleByUserId(session.user_id);
+    if (role === null) {
+      clearSessionCookie(res);
+      await revokeSession(session.id);
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    req.auth = { userId: session.user_id, sessionId: session.id, role };
+    next();
+  } catch (e) {
+    next(e);
+  }
 }
 
 app.get("/health", async (_req, res) => {
@@ -74,38 +201,70 @@ app.get("/health", async (_req, res) => {
   }
 });
 
-app.post("/v1/auth/login", (req, res) => {
+app.post("/v1/auth/login", async (req, res) => {
   const { id, password } = req.body ?? {};
 
   if (typeof id !== "string" || typeof password !== "string") {
     return res.status(400).json({ ok: false, error: "id and password are required" });
   }
 
+  let authenticated = false;
+  let role = null;
+
   if (id === LOGIN_ID && password === LOGIN_PASSWORD) {
-    return res.json({ ok: true });
+    authenticated = true;
+    role = LOGIN_ROLE;
+  } else {
+    const user = await findUserById(id);
+    if (user && password === user.password) {
+      authenticated = true;
+      role = user.role;
+    }
   }
 
-  return res.status(401).json({ ok: false, error: "invalid credentials" });
+  if (!authenticated) {
+    return res.status(401).json({ ok: false, error: "invalid credentials" });
+  }
+
+  try {
+    const { sessionId, expiresAt } = await createSession(id);
+    setSessionCookie(res, sessionId, expiresAt);
+    return res.json({ ok: true, role });
+  } catch (e) {
+    console.error("Failed to create session", e);
+    return res.status(500).json({ ok: false, error: "session create failed" });
+  }
 });
 
-app.post("/v1/customers", async (req, res) => {
+app.get("/v1/auth/me", requireAuth, async (req, res) => {
+  res.json({ ok: true, user_id: req.auth.userId, role: req.auth.role });
+});
+
+app.post("/v1/auth/logout", async (req, res) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (sessionId) {
+    await revokeSession(sessionId);
+  }
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.post("/v1/customers", requireAuth, async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {
     return res.status(400).json({ error: "name is required (<=200 chars)" });
   }
-  const r = await pool.query(
-    "INSERT INTO customers(name) VALUES($1) RETURNING id, name, created_at",
-    [name.trim()]
-  );
+  const r = await pool.query("INSERT INTO customers(name) VALUES($1) RETURNING id, name, created_at", [
+    name.trim(),
+  ]);
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/customers", async (req, res) => {
+app.get("/v1/customers", requireAuth, async (req, res) => {
   const q = (req.query.query ?? "").toString().trim();
   if (!q) {
-    const r = await pool.query(
-      "SELECT id, name, created_at FROM customers ORDER BY id DESC LIMIT 50"
-    );
+    const r = await pool.query("SELECT id, name, created_at FROM customers ORDER BY id DESC LIMIT 50");
     return res.json({ items: r.rows });
   }
   const r = await pool.query(
@@ -115,7 +274,7 @@ app.get("/v1/customers", async (req, res) => {
   res.json({ items: r.rows });
 });
 
-app.post("/v1/visits", async (req, res) => {
+app.post("/v1/visits", requireAuth, async (req, res) => {
   const { customer_id, visited_at, summary, body } = req.body ?? {};
 
   if (!Number.isInteger(customer_id)) {
@@ -143,7 +302,7 @@ app.post("/v1/visits", async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/visits", async (req, res) => {
+app.get("/v1/visits", requireAuth, async (req, res) => {
   const customerId = req.query.customer_id ? Number(req.query.customer_id) : null;
   const from = req.query.from ? new Date(req.query.from.toString()) : null;
   const to = req.query.to ? new Date(req.query.to.toString()) : null;
@@ -184,14 +343,10 @@ app.get("/v1/visits", async (req, res) => {
   res.json({ items: r.rows });
 });
 
-ensureSchema()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`API listening on :${PORT}`);
-      console.log(`CORS origins allowed: ${ALLOWED_ORIGINS.join(", ")}`);
-    });
-  })
-  .catch((e) => {
-    console.error("Failed to start:", e);
-    process.exit(1);
-  });
+app.listen(PORT, () => {
+  console.log(`API listening on :${PORT}`);
+  console.log(`CORS origins allowed: ${ALLOWED_ORIGINS.join(", ")}`);
+  console.log(
+    `Session cookie settings: SameSite=${cookieSameSiteNormalized}, Secure=${cookieSecure}, Domain=${SESSION_COOKIE_DOMAIN || "(none)"}`
+  );
+});

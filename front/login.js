@@ -1,8 +1,22 @@
-﻿const form = document.getElementById("loginForm");
+const form = document.getElementById("loginForm");
 const message = document.getElementById("message");
 
 const apiBaseMeta = document.querySelector('meta[name="api-base-url"]');
 const API_BASE_URL = apiBaseMeta?.content?.trim() || "";
+
+async function checkAlreadyLoggedIn() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/v1/auth/me`, {
+      method: "GET",
+      credentials: "include",
+    });
+    if (response.ok) {
+      window.location.href = "./report.html";
+    }
+  } catch (_error) {
+    // Ignore and keep login form.
+  }
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -18,8 +32,6 @@ form.addEventListener("submit", async (event) => {
 
   message.style.color = "#1e3a4f";
   message.textContent = "ログイン中...";
-
-  console.log(API_BASE_URL);
 
   try {
     const response = await fetch(`${API_BASE_URL}/v1/auth/login`, {
@@ -43,3 +55,5 @@ form.addEventListener("submit", async (event) => {
     message.textContent = "ログインAPIに接続できません。";
   }
 });
+
+checkAlreadyLoggedIn();
