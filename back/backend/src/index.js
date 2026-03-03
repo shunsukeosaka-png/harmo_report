@@ -365,6 +365,124 @@ app.post("/v1/reports", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/v1/reports", requireAuth, async (req, res) => {
+  const serial = (req.query.serial ?? "").toString().trim();
+  const workType = (req.query.work_type ?? "").toString().trim();
+  const createdBy = (req.query.created_by ?? "").toString().trim();
+  const hasFaultInfoRaw = (req.query.has_fault_info ?? "").toString().trim().toLowerCase();
+
+  let hasFaultInfoFilter = null;
+  if (hasFaultInfoRaw) {
+    hasFaultInfoFilter = parseBoolLike(hasFaultInfoRaw);
+    if (hasFaultInfoFilter === null) {
+      return res.status(400).json({ error: "has_fault_info must be one of: true/false/1/0" });
+    }
+  }
+
+  const page = Number.parseInt((req.query.page ?? "1").toString(), 10);
+  if (!Number.isInteger(page) || page < 1) {
+    return res.status(400).json({ error: "page must be an integer >= 1" });
+  }
+
+  const pageSizeRequested = Number.parseInt((req.query.page_size ?? "50").toString(), 10);
+  if (!Number.isInteger(pageSizeRequested) || pageSizeRequested < 1) {
+    return res.status(400).json({ error: "page_size must be an integer >= 1" });
+  }
+  const pageSize = Math.min(50, pageSizeRequested);
+  const offset = (page - 1) * pageSize;
+
+  const where = [];
+  const params = [];
+  let i = 1;
+
+  if (serial) {
+    where.push(`r.serial_number ILIKE $${i++}`);
+    params.push(`%${serial}%`);
+  }
+  if (workType) {
+    where.push(`r.work_type = $${i++}`);
+    params.push(workType);
+  }
+  if (createdBy) {
+    where.push(`r.created_by ILIKE $${i++}`);
+    params.push(`%${createdBy}%`);
+  }
+  if (hasFaultInfoFilter !== null) {
+    where.push(`r.has_fault_info = $${i++}`);
+    params.push(hasFaultInfoFilter);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const countResult = await pool.query(`SELECT COUNT(*)::int AS total FROM reports r ${whereSql}`, params);
+  const total = countResult.rows[0].total;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+
+  const dataResult = await pool.query(
+    `
+    SELECT
+      r.id,
+      r.customer_name,
+      r.address,
+      r.serial_number,
+      r.work_type,
+      r.has_fault_info,
+      r.fault_info,
+      r.work_hours,
+      r.created_by,
+      r.created_at
+    FROM reports r
+    ${whereSql}
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT $${i++}
+    OFFSET $${i++}
+    `,
+    [...params, pageSize, offset]
+  );
+
+  const reports = dataResult.rows;
+  const reportIds = reports.map((report) => report.id);
+  const partsByReportId = new Map();
+
+  if (reportIds.length > 0) {
+    const partsResult = await pool.query(
+      `
+      SELECT report_id, part_number, quantity
+      FROM report_parts
+      WHERE report_id = ANY($1::int[])
+      ORDER BY report_id ASC, id ASC
+      `,
+      [reportIds]
+    );
+
+    for (const part of partsResult.rows) {
+      const current = partsByReportId.get(part.report_id) ?? [];
+      current.push({
+        part_number: part.part_number,
+        quantity: part.quantity,
+      });
+      partsByReportId.set(part.report_id, current);
+    }
+  }
+
+  const itemsWithParts = reports.map((report) => ({
+    ...report,
+    parts: partsByReportId.get(report.id) ?? [],
+  }));
+
+  res.json({
+    items: itemsWithParts,
+    pagination: {
+      page,
+      page_size: pageSize,
+      total,
+      total_pages: totalPages,
+      has_prev: page > 1,
+      has_next: totalPages > 0 && page < totalPages,
+    },
+  });
+});
+
 app.post("/v1/customers", requireAuth, async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {

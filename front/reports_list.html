@@ -14,7 +14,7 @@
       color: #143046;
     }
     main {
-      width: min(960px, 92vw);
+      width: min(1200px, 96vw);
       margin: 24px auto;
       padding: 24px;
       background: #fff;
@@ -35,14 +35,6 @@
       margin: 0;
       font-size: 1.5rem;
     }
-    .placeholder {
-      margin-top: 20px;
-      padding: 20px;
-      border: 1px dashed #b7cedc;
-      border-radius: 8px;
-      background: #f8fcff;
-      color: #355268;
-    }
     button, .menu-link {
       border: 0;
       border-radius: 8px;
@@ -53,6 +45,128 @@
       display: inline-block;
       background: #e4edf3;
       color: #123349;
+    }
+    .filters {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .field label {
+      display: block;
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+      color: #355268;
+    }
+    .field input, .field select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border: 1px solid #bfd2df;
+      border-radius: 8px;
+      font-size: 0.95rem;
+    }
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .table-wrap {
+      margin-top: 16px;
+      overflow-x: auto;
+      border: 1px solid #d4e2eb;
+      border-radius: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1100px;
+      background: #fff;
+    }
+    thead th {
+      background: #eef5fa;
+      font-size: 0.85rem;
+      text-align: left;
+      color: #24475f;
+      border-bottom: 1px solid #d4e2eb;
+      padding: 10px 8px;
+      white-space: nowrap;
+    }
+    tbody td {
+      border-bottom: 1px solid #edf3f7;
+      padding: 8px;
+      vertical-align: top;
+      font-size: 0.92rem;
+    }
+    td.parts-cell {
+      min-width: 180px;
+    }
+    .parts-details {
+      display: inline-block;
+      width: 100%;
+    }
+    .parts-details summary {
+      cursor: pointer;
+      color: #0b74b6;
+      font-weight: 600;
+      user-select: none;
+    }
+    .parts-details ul {
+      margin: 6px 0 0 16px;
+      padding: 0;
+    }
+    .parts-details li {
+      margin: 2px 0;
+    }
+    td.fault-yes {
+      background: #ffd8d8;
+      color: #7a1111;
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+    }
+    td.fault-no {
+      background: #f3f8fc;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .message {
+      min-height: 1.2em;
+      margin-top: 12px;
+      font-size: 0.9rem;
+      color: #b00020;
+    }
+    .pagination {
+      margin-top: 12px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pagination button {
+      background: #f0f5f9;
+      border: 1px solid #ccdbe6;
+      padding: 6px 10px;
+    }
+    .pagination button.active {
+      background: #0b74b6;
+      border-color: #0b74b6;
+      color: #fff;
+    }
+    .pagination .dots {
+      padding: 0 4px;
+      color: #567286;
+    }
+    @media (max-width: 900px) {
+      .filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 520px) {
+      .filters {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -66,9 +180,62 @@
       </div>
     </div>
 
-    <div class="placeholder">
-      一覧画面はこれから実装します。
+    <form id="filterForm" class="filters" novalidate>
+      <div class="field">
+        <label for="serialFilter">シリアル</label>
+        <input id="serialFilter" name="serial" type="text" placeholder="部分一致">
+      </div>
+      <div class="field">
+        <label for="workTypeFilter">作業内容</label>
+        <select id="workTypeFilter" name="work_type">
+          <option value="">すべて</option>
+          <option value="調整">調整</option>
+          <option value="部品交換">部品交換</option>
+          <option value="点検">点検</option>
+          <option value="その他">その他</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="hasFaultFilter">フォルト情報の有無</label>
+        <select id="hasFaultFilter" name="has_fault_info">
+          <option value="">すべて</option>
+          <option value="true">あり</option>
+          <option value="false">なし</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="createdByFilter">作成者</label>
+        <input id="createdByFilter" name="created_by" type="text" placeholder="部分一致">
+      </div>
+      <div class="filter-actions">
+        <button id="searchBtn" type="submit">検索</button>
+        <button id="clearBtn" type="button">クリア</button>
+      </div>
+    </form>
+
+    <p id="message" class="message" aria-live="polite"></p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>顧客名</th>
+            <th>住所</th>
+            <th>シリアル</th>
+            <th>作業内容</th>
+            <th>交換部品</th>
+            <th>フォルト有無</th>
+            <th>フォルト情報</th>
+            <th>作業時間</th>
+            <th>作成者</th>
+            <th>作成日時</th>
+          </tr>
+        </thead>
+        <tbody id="reportsTbody"></tbody>
+      </table>
     </div>
+
+    <div id="pagination" class="pagination"></div>
   </main>
 
   <script src="./reports_list.js" defer></script>
