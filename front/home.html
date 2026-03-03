@@ -56,6 +56,13 @@
     .action-link:hover {
       background: #eef7ff;
     }
+    .action-link.is-disabled {
+      background: #edf2f6;
+      border-color: #d3dbe4;
+      color: #8a98a6;
+      pointer-events: none;
+      cursor: not-allowed;
+    }
     button {
       border: 0;
       border-radius: 8px;
@@ -82,7 +89,7 @@
 
     <div class="actions">
       <a class="action-link" href="./reports_list.html">レポート一覧</a>
-      <a class="action-link" href="./report.html">レポート記入ページ</a>
+      <a id="reportEntryLink" class="action-link" href="./report.html">レポート記入ページ</a>
     </div>
   </main>
 

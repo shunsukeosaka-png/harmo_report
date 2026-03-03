@@ -9,6 +9,11 @@ const message = document.getElementById("message");
 
 const apiBaseMeta = document.querySelector('meta[name="api-base-url"]');
 const API_BASE_URL = apiBaseMeta?.content?.trim() || "";
+const REPORT_WRITE_ROLES = new Set([0, 1, 9]);
+
+function canWriteReports(role) {
+  return REPORT_WRITE_ROLES.has(Number(role));
+}
 
 function setMessage(text, color = "#b00020") {
   message.style.color = color;
@@ -124,6 +129,12 @@ async function ensureLoggedIn() {
     });
     if (!response.ok) {
       window.location.href = "./index.html";
+      return;
+    }
+
+    const me = await response.json();
+    if (!canWriteReports(me.role)) {
+      window.location.href = "./reports_list.html";
     }
   } catch (_error) {
     window.location.href = "./index.html";
@@ -184,6 +195,10 @@ reportForm.addEventListener("submit", async (event) => {
 
     if (response.status === 401) {
       window.location.href = "./index.html";
+      return;
+    }
+    if (response.status === 403) {
+      window.location.href = "./reports_list.html";
       return;
     }
 

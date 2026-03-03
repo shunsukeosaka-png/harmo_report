@@ -1,8 +1,26 @@
 const userMeta = document.getElementById("userMeta");
 const logoutBtn = document.getElementById("logoutBtn");
+const reportEntryLink = document.getElementById("reportEntryLink");
 
 const apiBaseMeta = document.querySelector('meta[name="api-base-url"]');
 const API_BASE_URL = apiBaseMeta?.content?.trim() || "";
+const REPORT_WRITE_ROLES = new Set([0, 1, 9]);
+
+function canWriteReports(role) {
+  return REPORT_WRITE_ROLES.has(Number(role));
+}
+
+function setReportEntryEnabled(enabled) {
+  if (enabled) {
+    reportEntryLink.classList.remove("is-disabled");
+    reportEntryLink.removeAttribute("aria-disabled");
+    reportEntryLink.removeAttribute("tabindex");
+    return;
+  }
+  reportEntryLink.classList.add("is-disabled");
+  reportEntryLink.setAttribute("aria-disabled", "true");
+  reportEntryLink.setAttribute("tabindex", "-1");
+}
 
 async function ensureLoggedIn() {
   try {
@@ -17,6 +35,7 @@ async function ensureLoggedIn() {
 
     const data = await response.json();
     userMeta.textContent = `ログイン中: ${data.user_id} (role: ${data.role})`;
+    setReportEntryEnabled(canWriteReports(data.role));
   } catch (_error) {
     window.location.href = "./index.html";
   }

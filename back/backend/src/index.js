@@ -40,6 +40,12 @@ function parseBoolLike(value) {
   return null;
 }
 
+const REPORT_WRITE_ROLES = new Set([0, 1, 9]);
+
+function isReportWriteAllowed(role) {
+  return REPORT_WRITE_ROLES.has(Number(role));
+}
+
 const cookieSameSiteNormalized =
   COOKIE_SAMESITE.length > 0
     ? COOKIE_SAMESITE[0].toUpperCase() + COOKIE_SAMESITE.slice(1).toLowerCase()
@@ -192,6 +198,13 @@ async function requireAuth(req, res, next) {
   }
 }
 
+function requireReportWriteRole(req, res, next) {
+  if (!isReportWriteAllowed(req.auth?.role)) {
+    return res.status(403).json({ ok: false, error: "forbidden" });
+  }
+  next();
+}
+
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT 1 AS ok");
@@ -250,7 +263,7 @@ app.post("/v1/auth/logout", async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/v1/reports", requireAuth, async (req, res) => {
+app.post("/v1/reports", requireAuth, requireReportWriteRole, async (req, res) => {
   const {
     customer_name,
     address,
@@ -495,7 +508,7 @@ app.get("/v1/reports", requireAuth, async (req, res) => {
   });
 });
 
-app.post("/v1/customers", requireAuth, async (req, res) => {
+app.post("/v1/customers", requireAuth, requireReportWriteRole, async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {
     return res.status(400).json({ error: "name is required (<=200 chars)" });
@@ -506,7 +519,7 @@ app.post("/v1/customers", requireAuth, async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/customers", requireAuth, async (req, res) => {
+app.get("/v1/customers", requireAuth, requireReportWriteRole, async (req, res) => {
   const q = (req.query.query ?? "").toString().trim();
   if (!q) {
     const r = await pool.query("SELECT id, name, created_at FROM customers ORDER BY id DESC LIMIT 50");
@@ -519,7 +532,7 @@ app.get("/v1/customers", requireAuth, async (req, res) => {
   res.json({ items: r.rows });
 });
 
-app.post("/v1/visits", requireAuth, async (req, res) => {
+app.post("/v1/visits", requireAuth, requireReportWriteRole, async (req, res) => {
   const { customer_id, visited_at, summary, body } = req.body ?? {};
 
   if (!Number.isInteger(customer_id)) {
@@ -547,7 +560,7 @@ app.post("/v1/visits", requireAuth, async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/visits", requireAuth, async (req, res) => {
+app.get("/v1/visits", requireAuth, requireReportWriteRole, async (req, res) => {
   const customerId = req.query.customer_id ? Number(req.query.customer_id) : null;
   const from = req.query.from ? new Date(req.query.from.toString()) : null;
   const to = req.query.to ? new Date(req.query.to.toString()) : null;
