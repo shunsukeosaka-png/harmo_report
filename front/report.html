@@ -31,6 +31,19 @@
       justify-content: space-between;
       gap: 12px;
     }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .menu-link {
+      background: #e4edf3;
+      color: #123349;
+      border-radius: 8px;
+      padding: 8px 12px;
+      text-decoration: none;
+      font-size: 0.95rem;
+    }
     #logoutBtn {
       background: #e4edf3;
       color: #123349;
@@ -103,6 +116,12 @@
     .submit-wrap {
       margin-top: 20px;
     }
+    .message {
+      min-height: 1.2em;
+      margin-top: 12px;
+      font-size: 0.9rem;
+      color: #b00020;
+    }
     #submitBtn {
       width: 100%;
       background: #0a7a22;
@@ -119,7 +138,10 @@
   <main>
     <div class="header-row">
       <h1>レポート内容入力</h1>
-      <button id="logoutBtn" type="button">ログアウト</button>
+      <div class="header-actions">
+        <a class="menu-link" href="./home.html">メニューへ</a>
+        <button id="logoutBtn" type="button">ログアウト</button>
+      </div>
     </div>
     <form id="reportForm" novalidate>
       <div class="field">
@@ -149,12 +171,12 @@
       </div>
 
       <div class="field">
-        <label>フォルトコード</label>
+        <label>フォルト情報</label>
         <div class="inline">
-          <input id="hasFaultCode" name="hasFaultCode" type="checkbox">
-          <span>フォルトコードあり</span>
+          <input id="hasFaultInfo" name="hasFaultInfo" type="checkbox">
+          <span>フォルト情報あり</span>
         </div>
-        <input id="faultCodeDetail" name="faultCodeDetail" type="text" placeholder="フォルトコード内容を入力" disabled>
+        <input id="faultInfoDetail" name="faultInfoDetail" type="text" placeholder="フォルト情報を入力" disabled>
       </div>
 
       <div class="parts-header">
@@ -165,11 +187,12 @@
 
       <div class="field">
         <label for="workHours">作業時間</label>
-        <input id="workHours" name="workHours" type="text" placeholder="例: 2時間30分" required>
+        <input id="workHours" name="workHours" type="number" min="0" step="0.1" placeholder="例: 2.5" required>
       </div>
 
       <div class="submit-wrap">
-        <button id="submitBtn" type="submit">保存（仮）</button>
+        <button id="submitBtn" type="submit">保存</button>
+        <p id="message" class="message" aria-live="polite"></p>
       </div>
     </form>
   </main>

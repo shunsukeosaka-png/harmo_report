@@ -40,6 +40,12 @@ function parseBoolLike(value) {
   return null;
 }
 
+const REPORT_WRITE_ROLES = new Set([0, 1, 9]);
+
+function isReportWriteAllowed(role) {
+  return REPORT_WRITE_ROLES.has(Number(role));
+}
+
 const cookieSameSiteNormalized =
   COOKIE_SAMESITE.length > 0
     ? COOKIE_SAMESITE[0].toUpperCase() + COOKIE_SAMESITE.slice(1).toLowerCase()
@@ -192,6 +198,13 @@ async function requireAuth(req, res, next) {
   }
 }
 
+function requireReportWriteRole(req, res, next) {
+  if (!isReportWriteAllowed(req.auth?.role)) {
+    return res.status(403).json({ ok: false, error: "forbidden" });
+  }
+  next();
+}
+
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("SELECT 1 AS ok");
@@ -250,7 +263,252 @@ app.post("/v1/auth/logout", async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/v1/customers", requireAuth, async (req, res) => {
+app.post("/v1/reports", requireAuth, requireReportWriteRole, async (req, res) => {
+  const {
+    customer_name,
+    address,
+    serial_number,
+    work_type,
+    has_fault_info,
+    fault_info,
+    work_hours,
+    parts,
+  } = req.body ?? {};
+
+  if (!customer_name || typeof customer_name !== "string" || customer_name.trim().length > 200) {
+    return res.status(400).json({ error: "customer_name is required (<=200 chars)" });
+  }
+  if (!address || typeof address !== "string" || address.trim().length > 1000) {
+    return res.status(400).json({ error: "address is required (<=1000 chars)" });
+  }
+  if (!serial_number || typeof serial_number !== "string" || serial_number.trim().length > 200) {
+    return res.status(400).json({ error: "serial_number is required (<=200 chars)" });
+  }
+  if (!work_type || typeof work_type !== "string" || work_type.trim().length > 100) {
+    return res.status(400).json({ error: "work_type is required (<=100 chars)" });
+  }
+  if (typeof has_fault_info !== "boolean") {
+    return res.status(400).json({ error: "has_fault_info must be boolean" });
+  }
+
+  const faultInfoValue = has_fault_info ? (typeof fault_info === "string" ? fault_info.trim() : "") : null;
+  if (has_fault_info && (!faultInfoValue || faultInfoValue.length > 1000)) {
+    return res.status(400).json({ error: "fault_info is required when has_fault_info=true (<=1000 chars)" });
+  }
+  if (!has_fault_info && fault_info != null && String(fault_info).trim() !== "") {
+    return res.status(400).json({ error: "fault_info must be null/empty when has_fault_info=false" });
+  }
+
+  const workHoursNumber = Number(work_hours);
+  if (!Number.isFinite(workHoursNumber) || workHoursNumber < 0) {
+    return res.status(400).json({ error: "work_hours must be a number >= 0" });
+  }
+
+  if (!Array.isArray(parts)) {
+    return res.status(400).json({ error: "parts must be an array" });
+  }
+
+  const normalizedParts = [];
+  for (const part of parts) {
+    const partNumberRaw = part?.part_number;
+    const quantityRaw = part?.quantity;
+
+    if (typeof partNumberRaw !== "string" || !partNumberRaw.trim() || partNumberRaw.trim().length > 200) {
+      return res.status(400).json({ error: "part_number is required for each part (<=200 chars)" });
+    }
+
+    const quantityNumber = Number(quantityRaw);
+    if (!Number.isInteger(quantityNumber) || quantityNumber <= 0) {
+      return res.status(400).json({ error: "quantity must be a positive integer for each part" });
+    }
+
+    normalizedParts.push({
+      part_number: partNumberRaw.trim(),
+      quantity: quantityNumber,
+    });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const reportResult = await client.query(
+      `
+      INSERT INTO reports(
+        customer_name, address, serial_number, work_type,
+        has_fault_info, fault_info, work_hours, created_by
+      )
+      VALUES($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING
+        id, customer_name, address, serial_number, work_type,
+        has_fault_info, fault_info, work_hours, created_by, created_at
+      `,
+      [
+        customer_name.trim(),
+        address.trim(),
+        serial_number.trim(),
+        work_type.trim(),
+        has_fault_info,
+        faultInfoValue,
+        workHoursNumber,
+        req.auth.userId,
+      ]
+    );
+
+    const report = reportResult.rows[0];
+
+    for (const part of normalizedParts) {
+      await client.query("INSERT INTO report_parts(report_id, part_number, quantity) VALUES($1, $2, $3)", [
+        report.id,
+        part.part_number,
+        part.quantity,
+      ]);
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json({
+      ...report,
+      parts: normalizedParts,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("Failed to create report", e);
+    res.status(500).json({ error: "failed to create report" });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/v1/reports", requireAuth, async (req, res) => {
+  const customerName = (req.query.customer_name ?? "").toString().trim();
+  const serial = (req.query.serial ?? "").toString().trim();
+  const partName = (req.query.part_name ?? "").toString().trim();
+  const workType = (req.query.work_type ?? "").toString().trim();
+  const createdBy = (req.query.created_by ?? "").toString().trim();
+  const hasFaultInfoRaw = (req.query.has_fault_info ?? "").toString().trim().toLowerCase();
+
+  let hasFaultInfoFilter = null;
+  if (hasFaultInfoRaw) {
+    hasFaultInfoFilter = parseBoolLike(hasFaultInfoRaw);
+    if (hasFaultInfoFilter === null) {
+      return res.status(400).json({ error: "has_fault_info must be one of: true/false/1/0" });
+    }
+  }
+
+  const page = Number.parseInt((req.query.page ?? "1").toString(), 10);
+  if (!Number.isInteger(page) || page < 1) {
+    return res.status(400).json({ error: "page must be an integer >= 1" });
+  }
+
+  const pageSizeRequested = Number.parseInt((req.query.page_size ?? "50").toString(), 10);
+  if (!Number.isInteger(pageSizeRequested) || pageSizeRequested < 1) {
+    return res.status(400).json({ error: "page_size must be an integer >= 1" });
+  }
+  const pageSize = Math.min(50, pageSizeRequested);
+  const offset = (page - 1) * pageSize;
+
+  const where = [];
+  const params = [];
+  let i = 1;
+
+  if (customerName) {
+    where.push(`r.customer_name ILIKE $${i++}`);
+    params.push(`%${customerName}%`);
+  }
+  if (serial) {
+    where.push(`r.serial_number ILIKE $${i++}`);
+    params.push(`%${serial}%`);
+  }
+  if (partName) {
+    where.push(
+      `EXISTS (SELECT 1 FROM report_parts rp_filter WHERE rp_filter.report_id = r.id AND rp_filter.part_number ILIKE $${i++})`
+    );
+    params.push(`%${partName}%`);
+  }
+  if (workType) {
+    where.push(`r.work_type = $${i++}`);
+    params.push(workType);
+  }
+  if (createdBy) {
+    where.push(`r.created_by ILIKE $${i++}`);
+    params.push(`%${createdBy}%`);
+  }
+  if (hasFaultInfoFilter !== null) {
+    where.push(`r.has_fault_info = $${i++}`);
+    params.push(hasFaultInfoFilter);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const countResult = await pool.query(`SELECT COUNT(*)::int AS total FROM reports r ${whereSql}`, params);
+  const total = countResult.rows[0].total;
+  const totalPages = total === 0 ? 0 : Math.ceil(total / pageSize);
+
+  const dataResult = await pool.query(
+    `
+    SELECT
+      r.id,
+      r.customer_name,
+      r.address,
+      r.serial_number,
+      r.work_type,
+      r.has_fault_info,
+      r.fault_info,
+      r.work_hours,
+      r.created_by,
+      r.created_at
+    FROM reports r
+    ${whereSql}
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT $${i++}
+    OFFSET $${i++}
+    `,
+    [...params, pageSize, offset]
+  );
+
+  const reports = dataResult.rows;
+  const reportIds = reports.map((report) => report.id);
+  const partsByReportId = new Map();
+
+  if (reportIds.length > 0) {
+    const partsResult = await pool.query(
+      `
+      SELECT report_id, part_number, quantity
+      FROM report_parts
+      WHERE report_id = ANY($1::int[])
+      ORDER BY report_id ASC, id ASC
+      `,
+      [reportIds]
+    );
+
+    for (const part of partsResult.rows) {
+      const current = partsByReportId.get(part.report_id) ?? [];
+      current.push({
+        part_number: part.part_number,
+        quantity: part.quantity,
+      });
+      partsByReportId.set(part.report_id, current);
+    }
+  }
+
+  const itemsWithParts = reports.map((report) => ({
+    ...report,
+    parts: partsByReportId.get(report.id) ?? [],
+  }));
+
+  res.json({
+    items: itemsWithParts,
+    pagination: {
+      page,
+      page_size: pageSize,
+      total,
+      total_pages: totalPages,
+      has_prev: page > 1,
+      has_next: totalPages > 0 && page < totalPages,
+    },
+  });
+});
+
+app.post("/v1/customers", requireAuth, requireReportWriteRole, async (req, res) => {
   const { name } = req.body ?? {};
   if (!name || typeof name !== "string" || name.length > 200) {
     return res.status(400).json({ error: "name is required (<=200 chars)" });
@@ -261,7 +519,7 @@ app.post("/v1/customers", requireAuth, async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/customers", requireAuth, async (req, res) => {
+app.get("/v1/customers", requireAuth, requireReportWriteRole, async (req, res) => {
   const q = (req.query.query ?? "").toString().trim();
   if (!q) {
     const r = await pool.query("SELECT id, name, created_at FROM customers ORDER BY id DESC LIMIT 50");
@@ -274,7 +532,7 @@ app.get("/v1/customers", requireAuth, async (req, res) => {
   res.json({ items: r.rows });
 });
 
-app.post("/v1/visits", requireAuth, async (req, res) => {
+app.post("/v1/visits", requireAuth, requireReportWriteRole, async (req, res) => {
   const { customer_id, visited_at, summary, body } = req.body ?? {};
 
   if (!Number.isInteger(customer_id)) {
@@ -302,7 +560,7 @@ app.post("/v1/visits", requireAuth, async (req, res) => {
   res.status(201).json(r.rows[0]);
 });
 
-app.get("/v1/visits", requireAuth, async (req, res) => {
+app.get("/v1/visits", requireAuth, requireReportWriteRole, async (req, res) => {
   const customerId = req.query.customer_id ? Number(req.query.customer_id) : null;
   const from = req.query.from ? new Date(req.query.from.toString()) : null;
   const to = req.query.to ? new Date(req.query.to.toString()) : null;
