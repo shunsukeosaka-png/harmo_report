@@ -1,4 +1,9 @@
-﻿harmo-training-api.lily-tech.net {
+﻿#証明書が切れたので一旦これで退避
+{
+  acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+harmo-training-api.lily-tech.net {
   encode gzip zstd
 
   reverse_proxy api:3000
