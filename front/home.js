@@ -5,9 +5,20 @@ const reportEntryLink = document.getElementById("reportEntryLink");
 const apiBaseMeta = document.querySelector('meta[name="api-base-url"]');
 const API_BASE_URL = apiBaseMeta?.content?.trim() || "";
 const REPORT_WRITE_ROLES = new Set([0, 1, 9]);
+const ROLE_LABELS = {
+  0: "作業者",
+  1: "作業者",
+  2: "閲覧者",
+  9: "管理者",
+};
 
 function canWriteReports(role) {
   return REPORT_WRITE_ROLES.has(Number(role));
+}
+
+function getRoleLabel(role) {
+  const normalizedRole = Number(role);
+  return ROLE_LABELS[normalizedRole] ?? `不明(${role})`;
 }
 
 function setReportEntryEnabled(enabled) {
@@ -34,7 +45,7 @@ async function ensureLoggedIn() {
     }
 
     const data = await response.json();
-    userMeta.textContent = `ログイン中: ${data.user_id} (role: ${data.role})`;
+    userMeta.textContent = `ログイン中: ${data.user_id} (${getRoleLabel(data.role)})`;
     setReportEntryEnabled(canWriteReports(data.role));
   } catch (_error) {
     window.location.href = "./index.html";

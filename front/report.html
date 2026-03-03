@@ -67,6 +67,31 @@
       box-sizing: border-box;
       font-size: 1rem;
     }
+    .prefixed-input {
+      display: flex;
+      align-items: center;
+      border: 1px solid #bfd2df;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .prefixed-input span {
+      padding: 10px 12px;
+      background: #eef4f8;
+      border-right: 1px solid #bfd2df;
+      font-weight: 600;
+      color: #123349;
+      white-space: nowrap;
+    }
+    .prefixed-input input {
+      border: 0;
+      border-radius: 0;
+      width: auto;
+      flex: 1;
+    }
+    .prefixed-input input:focus {
+      outline: none;
+    }
     textarea {
       min-height: 96px;
       resize: vertical;
@@ -156,7 +181,10 @@
 
       <div class="field">
         <label for="serialNumber">シリアル番号</label>
-        <input id="serialNumber" name="serialNumber" type="text" required>
+        <div class="prefixed-input">
+          <span>PH-</span>
+          <input id="serialNumber" name="serialNumber" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="6桁の数値を入力" required>
+        </div>
       </div>
 
       <div class="field">

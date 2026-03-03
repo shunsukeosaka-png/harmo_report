@@ -6,6 +6,7 @@ const reportForm = document.getElementById("reportForm");
 const logoutBtn = document.getElementById("logoutBtn");
 const submitBtn = document.getElementById("submitBtn");
 const message = document.getElementById("message");
+const serialNumberInput = document.getElementById("serialNumber");
 
 const apiBaseMeta = document.querySelector('meta[name="api-base-url"]');
 const API_BASE_URL = apiBaseMeta?.content?.trim() || "";
@@ -20,6 +21,14 @@ function setMessage(text, color = "#b00020") {
   message.textContent = text;
 }
 
+function normalizeSerialNumber(raw) {
+  return raw.replace(/\D/g, "").slice(0, 6);
+}
+
+function normalizePartNumber(raw) {
+  return raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 8);
+}
+
 function createPartRow() {
   const row = document.createElement("div");
   row.className = "part-row";
@@ -27,7 +36,10 @@ function createPartRow() {
   row.innerHTML = `
     <div>
       <label>部品番号</label>
-      <input type="text" name="partNumber[]" placeholder="部品番号">
+      <div class="prefixed-input">
+        <span>VT-</span>
+        <input type="text" name="partNumber[]" inputmode="text" autocomplete="off" maxlength="8" placeholder="8桁の英数字を入力">
+      </div>
     </div>
     <div>
       <label>個数</label>
@@ -37,6 +49,12 @@ function createPartRow() {
   `;
 
   const removeButton = row.querySelector(".remove-part");
+  const partNumberInput = row.querySelector('input[name="partNumber[]"]');
+
+  partNumberInput?.addEventListener("input", () => {
+    partNumberInput.value = normalizePartNumber(partNumberInput.value);
+  });
+
   removeButton.addEventListener("click", () => {
     row.remove();
   });
@@ -57,7 +75,7 @@ function collectParts() {
     const partNumberInput = row.querySelector('input[name="partNumber[]"]');
     const quantityInput = row.querySelector('input[name="partQuantity[]"]');
 
-    const partNumber = (partNumberInput?.value ?? "").trim();
+    const partNumber = normalizePartNumber((partNumberInput?.value ?? "").trim());
     const quantityRaw = (quantityInput?.value ?? "").trim();
 
     if (!partNumber && !quantityRaw) {
@@ -66,13 +84,16 @@ function collectParts() {
     if (!partNumber) {
       throw new Error("部品番号を入力してください。");
     }
+    if (partNumber.length !== 8) {
+      throw new Error("部品番号は8桁の英数字で入力してください。");
+    }
 
     const quantity = Number(quantityRaw);
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw new Error("部品の個数は1以上の整数で入力してください。");
     }
 
-    parts.push({ part_number: partNumber, quantity });
+    parts.push({ part_number: `VT-${partNumber}`, quantity });
   }
 
   return parts;
@@ -81,7 +102,7 @@ function collectParts() {
 function buildPayload() {
   const customerName = document.getElementById("customerName").value.trim();
   const address = document.getElementById("address").value.trim();
-  const serialNumber = document.getElementById("serialNumber").value.trim();
+  const serialDigits = normalizeSerialNumber(serialNumberInput.value.trim());
   const workType = document.getElementById("workType").value.trim();
   const workHoursRaw = document.getElementById("workHours").value;
   const workHours = Number(workHoursRaw);
@@ -90,7 +111,10 @@ function buildPayload() {
 
   if (!customerName) throw new Error("顧客名を入力してください。");
   if (!address) throw new Error("住所を入力してください。");
-  if (!serialNumber) throw new Error("シリアル番号を入力してください。");
+  if (!serialDigits) throw new Error("シリアル番号を入力してください。");
+  if (serialDigits.length !== 6) {
+    throw new Error("シリアル番号は6桁の数値で入力してください。");
+  }
   if (!workType) throw new Error("作業内容を選択してください。");
   if (!Number.isFinite(workHours) || workHours < 0) {
     throw new Error("作業時間は0以上の数値で入力してください。");
@@ -103,7 +127,7 @@ function buildPayload() {
   return {
     customer_name: customerName,
     address,
-    serial_number: serialNumber,
+    serial_number: `PH-${serialDigits}`,
     work_type: workType,
     has_fault_info: hasFault,
     fault_info: hasFault ? faultInfo : null,
@@ -158,6 +182,10 @@ hasFaultInfo.addEventListener("change", () => {
   if (!hasFaultInfo.checked) {
     faultInfoDetail.value = "";
   }
+});
+
+serialNumberInput.addEventListener("input", () => {
+  serialNumberInput.value = normalizeSerialNumber(serialNumberInput.value);
 });
 
 addPartBtn.addEventListener("click", () => {
