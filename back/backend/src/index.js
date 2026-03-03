@@ -366,7 +366,9 @@ app.post("/v1/reports", requireAuth, async (req, res) => {
 });
 
 app.get("/v1/reports", requireAuth, async (req, res) => {
+  const customerName = (req.query.customer_name ?? "").toString().trim();
   const serial = (req.query.serial ?? "").toString().trim();
+  const partName = (req.query.part_name ?? "").toString().trim();
   const workType = (req.query.work_type ?? "").toString().trim();
   const createdBy = (req.query.created_by ?? "").toString().trim();
   const hasFaultInfoRaw = (req.query.has_fault_info ?? "").toString().trim().toLowerCase();
@@ -395,9 +397,19 @@ app.get("/v1/reports", requireAuth, async (req, res) => {
   const params = [];
   let i = 1;
 
+  if (customerName) {
+    where.push(`r.customer_name ILIKE $${i++}`);
+    params.push(`%${customerName}%`);
+  }
   if (serial) {
     where.push(`r.serial_number ILIKE $${i++}`);
     params.push(`%${serial}%`);
+  }
+  if (partName) {
+    where.push(
+      `EXISTS (SELECT 1 FROM report_parts rp_filter WHERE rp_filter.report_id = r.id AND rp_filter.part_number ILIKE $${i++})`
+    );
+    params.push(`%${partName}%`);
   }
   if (workType) {
     where.push(`r.work_type = $${i++}`);

@@ -50,7 +50,7 @@
     .filters {
       margin-top: 16px;
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(7, minmax(0, 1fr));
       gap: 10px;
       align-items: end;
     }
@@ -159,12 +159,12 @@
       padding: 0 4px;
       color: #567286;
     }
-    @media (max-width: 900px) {
+    @media (max-width: 980px) {
       .filters {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(4, minmax(0, 1fr));
       }
     }
-    @media (max-width: 520px) {
+    @media (max-width: 640px) {
       .filters {
         grid-template-columns: 1fr;
       }
@@ -184,8 +184,16 @@
 
     <form id="filterForm" class="filters" novalidate>
       <div class="field">
+        <label for="customerNameFilter">顧客名</label>
+        <input id="customerNameFilter" name="customer_name" type="text" placeholder="部分一致">
+      </div>
+      <div class="field">
         <label for="serialFilter">シリアル</label>
         <input id="serialFilter" name="serial" type="text" placeholder="部分一致">
+      </div>
+      <div class="field">
+        <label for="partNameFilter">部品名</label>
+        <input id="partNameFilter" name="part_name" type="text" placeholder="部分一致">
       </div>
       <div class="field">
         <label for="workTypeFilter">作業内容</label>

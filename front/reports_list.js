@@ -2,7 +2,9 @@ const logoutBtn = document.getElementById("logoutBtn");
 const exportCsvBtn = document.getElementById("exportCsvBtn");
 const filterForm = document.getElementById("filterForm");
 const clearBtn = document.getElementById("clearBtn");
+const customerNameFilter = document.getElementById("customerNameFilter");
 const serialFilter = document.getElementById("serialFilter");
+const partNameFilter = document.getElementById("partNameFilter");
 const workTypeFilter = document.getElementById("workTypeFilter");
 const hasFaultFilter = document.getElementById("hasFaultFilter");
 const createdByFilter = document.getElementById("createdByFilter");
@@ -153,12 +155,16 @@ function renderPagination() {
 
 function buildSearchParams(page) {
   const params = new URLSearchParams();
+  const customerName = customerNameFilter.value.trim();
   const serial = serialFilter.value.trim();
+  const partName = partNameFilter.value.trim();
   const workType = workTypeFilter.value.trim();
   const hasFault = hasFaultFilter.value.trim();
   const createdBy = createdByFilter.value.trim();
 
+  if (customerName) params.set("customer_name", customerName);
   if (serial) params.set("serial", serial);
+  if (partName) params.set("part_name", partName);
   if (workType) params.set("work_type", workType);
   if (hasFault) params.set("has_fault_info", hasFault);
   if (createdBy) params.set("created_by", createdBy);
@@ -198,7 +204,7 @@ function createCsvContent(items) {
       item.address,
       item.serial_number,
       item.work_type,
-      null, // 交換部品は下で設定
+      null,
       item.has_fault_info ? "あり" : "なし",
       item.fault_info ?? "",
       item.work_hours,
@@ -335,7 +341,9 @@ filterForm.addEventListener("submit", async (event) => {
 });
 
 clearBtn.addEventListener("click", async () => {
+  customerNameFilter.value = "";
   serialFilter.value = "";
+  partNameFilter.value = "";
   workTypeFilter.value = "";
   hasFaultFilter.value = "";
   createdByFilter.value = "";
