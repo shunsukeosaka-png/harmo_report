@@ -350,9 +350,11 @@ clearBtn.addEventListener("click", async () => {
   await loadReports(1);
 });
 
-exportCsvBtn.addEventListener("click", () => {
-  downloadCurrentPageCsv();
-});
+if (exportCsvBtn) {
+  exportCsvBtn.addEventListener("click", () => {
+    downloadCurrentPageCsv();
+  });
+}
 
 logoutBtn.addEventListener("click", async () => {
   await logout();
