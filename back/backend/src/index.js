@@ -14,6 +14,7 @@ const ALLOWED_ORIGINS = (APP_ORIGIN ?? "")
   .filter(Boolean);
 const LOGIN_ID = process.env.LOGIN_ID ?? "9999";
 const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD ?? "9999";
+const LOGIN_ROLE = Number(process.env.LOGIN_ROLE ?? 9);
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "sid";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? 12);
 const COOKIE_SAMESITE = (process.env.COOKIE_SAMESITE ?? "Lax").trim();
@@ -26,6 +27,10 @@ if (!DATABASE_URL) {
 }
 if (ALLOWED_ORIGINS.length === 0) {
   console.error("APP_ORIGIN is required (comma-separated allowed)");
+  process.exit(1);
+}
+if (!Number.isInteger(LOGIN_ROLE)) {
+  console.error("LOGIN_ROLE must be integer");
   process.exit(1);
 }
 
@@ -147,6 +152,18 @@ async function revokeSession(sessionId) {
   ]);
 }
 
+async function findUserById(userId) {
+  const r = await pool.query("SELECT id, password, role FROM users WHERE id = $1 LIMIT 1", [userId]);
+  return r.rows[0] ?? null;
+}
+
+async function resolveRoleByUserId(userId) {
+  if (userId === LOGIN_ID) return LOGIN_ROLE;
+  const user = await findUserById(userId);
+  if (!user) return null;
+  return user.role;
+}
+
 async function requireAuth(req, res, next) {
   try {
     const cookies = parseCookies(req.headers.cookie);
@@ -161,7 +178,14 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ ok: false, error: "unauthorized" });
     }
 
-    req.auth = { userId: session.user_id, sessionId: session.id };
+    const role = await resolveRoleByUserId(session.user_id);
+    if (role === null) {
+      clearSessionCookie(res);
+      await revokeSession(session.id);
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    req.auth = { userId: session.user_id, sessionId: session.id, role };
     next();
   } catch (e) {
     next(e);
@@ -184,14 +208,28 @@ app.post("/v1/auth/login", async (req, res) => {
     return res.status(400).json({ ok: false, error: "id and password are required" });
   }
 
-  if (id !== LOGIN_ID || password !== LOGIN_PASSWORD) {
+  let authenticated = false;
+  let role = null;
+
+  if (id === LOGIN_ID && password === LOGIN_PASSWORD) {
+    authenticated = true;
+    role = LOGIN_ROLE;
+  } else {
+    const user = await findUserById(id);
+    if (user && password === user.password) {
+      authenticated = true;
+      role = user.role;
+    }
+  }
+
+  if (!authenticated) {
     return res.status(401).json({ ok: false, error: "invalid credentials" });
   }
 
   try {
     const { sessionId, expiresAt } = await createSession(id);
     setSessionCookie(res, sessionId, expiresAt);
-    return res.json({ ok: true });
+    return res.json({ ok: true, role });
   } catch (e) {
     console.error("Failed to create session", e);
     return res.status(500).json({ ok: false, error: "session create failed" });
@@ -199,7 +237,7 @@ app.post("/v1/auth/login", async (req, res) => {
 });
 
 app.get("/v1/auth/me", requireAuth, async (req, res) => {
-  res.json({ ok: true, user_id: req.auth.userId });
+  res.json({ ok: true, user_id: req.auth.userId, role: req.auth.role });
 });
 
 app.post("/v1/auth/logout", async (req, res) => {
